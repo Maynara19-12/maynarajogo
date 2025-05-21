@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Orange Purple Runner</title>
+<style>
+  /* Modern dark background with orange and purple accent */
+  body, html {
+    margin: 0; padding: 0; overflow: hidden;
+    background: linear-gradient(135deg, #3a0057, #e66800);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    user-select: none;
+    height: 100vh;
+  }
+  #gameContainer {
+    position: relative;
+    width: 480px;
+    height: 720px;
+    margin: 0 auto;
+    background: linear-gradient(to top, #2a003e, #602a00);
+    border-radius: 20px;
+    box-shadow: 0 0 20px #e66800cc, 0 0 40px #9a2fffcc inset;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: #210032;
+    border-radius: 20px;
+    box-shadow: inset 0 0 15px #7e24ffaa;
+  }
+  #score {
+    position: absolute;
+    top: 15px; left: 15px;
+    color: #ff8c1a;
+    font-weight: 700;
+    font-size: 24px;
+    text-shadow: 1px 1px 3px #220040bb;
+  }
+  #gameOverOverlay {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(40, 0, 70, 0.85);
+    color: #ffa64d;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-weight: 700;
+    border-radius: 20px;
+    visibility: hidden;
+  }
+  #restartButton {
+    margin-top: 25px;
+    background: #e66800;
+    border: none;
+    border-radius: 12px;
+    padding: 12px 24px;
+    font-weight: bold;
+    font-size: 20px;
+    cursor: pointer;
+    color: #fff;
+    box-shadow: 0 0 15px #ffa64d;
+    transition: background 0.3s ease;
+  }
+  #restartButton:hover {
+    background: #b34a00;
+  }
+  #instructions {
+    position: absolute;
+    bottom: 15px; left: 15px; right: 15px;
+    color: #d18c00cc;
+    font-size: 16px;
+    font-weight: 600;
+    text-align: center;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gameCanvas" width="480" height="720"></canvas>
+  <div id="score">Score: 0</div>
+  <div id="gameOverOverlay">
+    Game Over<br />
+    <button id="restartButton">Restart</button>
+  </div>
+  <div id="instructions">
+    Use ← → Arrow Keys to move &nbsp; • &nbsp; Space / ↑ to jump
+  </div>
+</div>
+<script>
+  (() => {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const gameOverOverlay = document.getElementById('gameOverOverlay');
+    const restartButton = document.getElementById('restartButton');
+
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+
+    // Lanes positions (3 lanes)
+    const lanesX = [WIDTH/4 - 40, WIDTH/2 - 40, 3*WIDTH/4 - 40];
+    const laneWidth = 80;
+
+    // Player properties
+    const player = {
+      lane: 1,
+      x: lanesX[1],
+      y: HEIGHT - 140,
+      width: 60,
+      height: 80,
+      vy: 0,
+      jumping: false,
+      onGround: true
+    };
+
+    // Gravity and jump
+    const gravity = 0.8;
+    const jumpForce = -15;
+
+    // Obstacles array
+    let obstacles = [];
+
+    // Item (coins) array
+    let coins = [];
+
+    // Game controls
+    const keys = {
+      left: false,
+      right: false,
+      up: false,
+      space: false
+    };
+
+    // Speed etc
+    let gameSpeed = 8;
+    let obstacleTimer = 0;
+    let obstacleInterval = 90;
+    let coinTimer = 0;
+    let coinInterval = 60;
+    let score = 0;
+    let gameOver = false;
+
+    // Colors
+    const colors = {
+      background1: '#210032',
+      background2: '#3a0057',
+      laneLine: '#9a2fff',
+      playerFill: '#e67300',
+      playerAccent: '#9a2fff',
+      obstacleFill: '#9a2fff',
+      coinFill: '#f5a623'
+    };
+
+    // Sounds (optional, not included for now)
+
+    // Event listeners
+    document.addEventListener('keydown', e => {
+      if (e.code === "ArrowLeft") keys.left = true;
+      if (e.code === "ArrowRight") keys.right = true;
+      if (e.code === "ArrowUp") keys.up = true;
+      if (e.code === "Space") keys.space = true;
+    });
+    document.addEventListener('keyup', e => {
+      if (e.code === "ArrowLeft") keys.left = false;
+      if (e.code === "ArrowRight") keys.right = false;
+      if (e.code === "ArrowUp") keys.up = false;
+      if (e.code === "Space") keys.space = false;
+    });
+
+    restartButton.addEventListener('click', () => {
+      resetGame();
+    });
+
+    function resetGame() {
+      player.lane = 1;
+      player.x = lanesX[player.lane];
+      player.y = HEIGHT - 140;
+      player.vy = 0;
+      player.jumping = false;
+      player.onGround = true;
+      obstacles = [];
+      coins = [];
+      gameSpeed = 8;
+      obstacleTimer = 0;
+      coinTimer = 0;
+      score = 0;
+      gameOver = false;
+      scoreEl.textContent = "Score: 0";
+      gameOverOverlay.style.visibility = 'hidden';
+      loop();
+    }
+
+    // Obstacle class
+    class Obstacle {
+      constructor(lane, y) {
+        this.lane = lane;
+        this.width = 60;
+        this.height = 60;
+        this.x = lanesX[lane];
+        this.y = y;
+        this.color = colors.obstacleFill;
+      }
+      update() {
+        this.y += gameSpeed;
+      }
+      draw() {
+        // Draw an angular futuristic barrier with orange-purple color
+        ctx.fillStyle = colors.obstacleFill;
+        ctx.beginPath();
+        ctx.moveTo(this.x, this.y + this.height);
+        ctx.lineTo(this.x + this.width/2, this.y);
+        ctx.lineTo(this.x + this.width, this.y + this.height);
+        ctx.closePath();
+        ctx.fill();
+        // Inner shape
+        ctx.fillStyle = colors.playerAccent;
+        ctx.beginPath();
+        ctx.moveTo(this.x + this.width/4, this.y + this.height * 0.75);
+        ctx.lineTo(this.x + this.width/2, this.y + this.height * 0.25);
+        ctx.lineTo(this.x + 3*this.width/4, this.y + this.height * 0.75);
+        ctx.closePath();
+        ctx.fill();
+      }
+      getBounds() {
+        return {x: this.x, y: this.y, width: this.width, height: this.height};
+      }
+    }
+
+    // Coin class
+    class Coin {
+      constructor(lane, y) {
+        this.lane = lane;
+        this.radius = 15;
+        this.x = lanesX[lane] + laneWidth/2;
+        this.y = y;
+        this.color1 = '#ffb84d';
+        this.color2 = '#7e24ff';
+        this.angle = 0;
+      }
+      update() {
+        this.y += gameSpeed;
+        this.angle += 0.1;
+      }
+      draw() {
+        // Rotating coin with ring - orange and purple themed
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        // Outer ring
+        ctx.strokeStyle = this.color2;
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+        ctx.stroke();
+        // Inner fill
+        ctx.fillStyle = this.color1;
+        ctx.beginPath();
+        ctx.arc(0, 0, this.radius * 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      getBounds() {
+        return {x: this.x - this.radius, y: this.y - this.radius, width: this.radius*2, height: this.radius*2};
+      }
+    }
+
+    function drawLanes() {
+      ctx.strokeStyle = colors.laneLine;
+      ctx.lineWidth = 6;
+      ctx.shadowColor = '#af5cff';
+      ctx.shadowBlur = 10;
+      for(let i = 1; i < lanesX.length; i++) {
+        let x = (lanesX[i-1] + laneWidth) + (lanesX[i] - (lanesX[i-1] + laneWidth))/2;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, HEIGHT);
+        ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+    }
+
+    function drawGround() {
+      ctx.fillStyle = `linear-gradient(180deg, ${colors.background1}, ${colors.background2})`;
+      ctx.fillRect(0, HEIGHT - 60, WIDTH, 60);
+      // Some subtle horizontal lines for road texture
+      ctx.strokeStyle = '#6a00cc33';
+      ctx.lineWidth = 2;
+      for(let y = HEIGHT - 55; y < HEIGHT - 10; y += 10) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(WIDTH, y);
+        ctx.stroke();
+      }
+    }
+
+    function drawPlayer() {
+      // Draw stylized character: A futuristic orange-purple runner
+      const pX = player.x + player.width / 2;
+      const pY = player.y + player.height;
+
+      // Body - block style with angular shapes
+      ctx.fillStyle = colors.playerFill;
+      ctx.shadowColor = '#ff7200bb';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.moveTo(player.x + 10, player.y + player.height);
+      ctx.lineTo(player.x + player.width - 10, player.y + player.height);
+      ctx.lineTo(player.x + player.width, player.y + player.height - 30);
+      ctx.lineTo(player.x + player.width - 10, player.y);
+      ctx.lineTo(player.x + 10, player.y);
+      ctx.lineTo(player.x, player.y + player.height - 30);
+      ctx.closePath();
+      ctx.fill();
+
+      // Accent stripes
+      ctx.fillStyle = colors.playerAccent;
+      ctx.beginPath();
+      ctx.moveTo(player.x + 10, player.y + player.height * 0.6);
+      ctx.lineTo(player.x + player.width * 0.6, player.y + player.height * 0.6);
+      ctx.lineTo(player.x + player.width * 0.4, player.y + player.height * 0.25);
+      ctx.lineTo(player.x + 10, player.y + player.height * 0.25);
+      ctx.closePath();
+      ctx.fill();
+
+      // Shadow below
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath();
+      ctx.ellipse(pX, pY + 6, 30, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.shadowBlur = 0;
+    }
+
+    function rectCollision(r1, r2) {
+      return !(r2.x > r1.x + r1.width || 
+               r2.x + r2.width < r1.x || 
+               r2.y > r1.y + r1.height ||
+               r2.y + r2.height < r1.y);
+    }
+
+    function circleRectCollision(circle, rect) {
+      // Find closest point to circle center inside rect
+      let closestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+      let closestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+      // Calculate distance
+      let dx = circle.x - closestX;
+      let dy = circle.y - closestY;
+      return (dx*dx + dy*dy) < (circle.radius * circle.radius);
+    }
+
+    function update() {
+      if(gameOver) return;
+
+      // Player horizontal movement
+      if(keys.left && player.lane > 0) {
+        player.lane--;
+        player.x = lanesX[player.lane];
+        keys.left = false;
+      }
+      if(keys.right && player.lane < lanesX.length - 1) {
+        player.lane++;
+        player.x = lanesX[player.lane];
+        keys.right = false;
+      }
+
+      // Jump mechanic
+      if((keys.up || keys.space) && player.onGround) {
+        player.vy = jumpForce;
+        player.jumping = true;
+        player.onGround = false;
+      }
+
+      // Apply gravity
+      if(!player.onGround) {
+        player.vy += gravity;
+        player.y += player.vy;
+        if(player.y >= HEIGHT - 140) {
+          player.y = HEIGHT - 140;
+          player.vy = 0;
+          player.jumping = false;
+          player.onGround = true;
+        }
+      }
+
+      // Spawn obstacles
+      obstacleTimer++;
+      if(obstacleTimer >= obstacleInterval) {
+        obstacleTimer = 0;
+        const lane = Math.floor(Math.random()*3);
+        obstacles.push(new Obstacle(lane, -60));
+        // Gradually increase speed and obstacle frequency but cap it
+        if(obstacleInterval > 50) obstacleInterval -= 0.5;
+        if(gameSpeed < 18) gameSpeed += 0.1;
+      }
+
+      // Spawn coins
+      coinTimer++;
+      if(coinTimer >= coinInterval) {
+        coinTimer = 0;
+        const lane = Math.floor(Math.random()*3);
+        coins.push(new Coin(lane, -30));
+      }
+
+      // Update obstacles
+      obstacles.forEach((ob, i) => {
+        ob.update();
+        // Remove if off screen
+        if(ob.y > HEIGHT) obstacles.splice(i, 1);
+        // Check collision with player
+        if(rectCollision(
+          {x: player.x, y: player.y, width: player.width, height: player.height},
+          ob.getBounds()
+        )) {
+          gameOver = true;
+          gameOverOverlay.style.visibility = 'visible';
+        }
+      });
+
+      // Update coins
+      coins.forEach((coin, i) => {
+        coin.update();
+        if(coin.y > HEIGHT) coins.splice(i,1);
+
+        // Check collision with player (circle-rect)
+        if(circleRectCollision(
+          {x: coin.x, y: coin.y, radius: coin.radius},
+          {x: player.x, y: player.y, width: player.width, height: player.height}
+        )) {
+          coins.splice(i,1);
+          score += 10;
+          scoreEl.textContent = "Score: " + score;
+        }
+      });
+    }
+
+    function draw() {
+      // Clear screen
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+      // Background gradient stripes
+      let grad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      grad.addColorStop(0, colors.background2);
+      grad.addColorStop(1, colors.background1);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Draw lanes lines
+      drawLanes();
+
+      // Draw ground area
+      drawGround();
+
+      // Draw player
+      drawPlayer();
+
+      // Draw obstacles
+      obstacles.forEach(ob => ob.draw());
+
+      // Draw coins
+      coins.forEach(coin => coin.draw());
+    }
+
+    function loop() {
+      update();
+      draw();
+      if(!gameOver) requestAnimationFrame(loop);
+    }
+
+    // Start the game
+    resetGame();
+  })();
+</script>
+</body>
+</html>
+
